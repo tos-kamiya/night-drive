@@ -1,14 +1,21 @@
 # night-drive
 
-Canvas-based night drive scene for GitHub Pages.
+For sleepless nights.
+
+A quiet canvas-based night drive scene for GitHub Pages.
+
+Inspired by "FreeWay", a classic night-driving program from the MS-DOS era, later ported to Windows as "FreeWay for Win".
+Reference: 窓の杜, 2001-12-18
+https://forest.watch.impress.co.jp/article/2001/12/18/okiniiri.html
+
+## Live
+
+https://tos-kamiya.github.io/night-drive/
 
 ## Local files
 
 - `index.html`: current main version and GitHub Pages entry point
 
-## Publish on GitHub Pages
+## Notes
 
-1. Create a GitHub repository, for example `night-drive`.
-2. Push this directory to the repository.
-3. In GitHub repository settings, enable Pages from the default branch root.
-4. Open the published URL.
+- This repository publishes directly from `index.html` on GitHub Pages.
