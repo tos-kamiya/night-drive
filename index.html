@@ -1,0 +1,838 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Night Drive Canvas</title>
+  <style>
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+      font-family: sans-serif;
+    }
+
+    canvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+      background: linear-gradient(to bottom, #02030a 0%, #050816 45%, #0a0a0a 100%);
+    }
+
+    .info {
+      position: fixed;
+      left: 12px;
+      bottom: 10px;
+      color: rgba(255, 255, 255, 0.65);
+      font-size: 13px;
+      letter-spacing: 0.04em;
+      user-select: none;
+      pointer-events: none;
+    }
+
+    .fs {
+      position: fixed;
+      right: 12px;
+      bottom: 10px;
+      background: rgba(255,255,255,0.08);
+      color: rgba(255,255,255,0.8);
+      border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 6px;
+      padding: 6px 10px;
+      cursor: pointer;
+      backdrop-filter: blur(4px);
+    }
+
+    .fs:hover {
+      background: rgba(255,255,255,0.15);
+    }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  <div id="infoLabel" class="info">night drive</div>
+  <button id="fsBtn" class="fs">⛶</button>
+
+  <script>
+    const canvas = document.getElementById("canvas");
+    const infoLabel = document.getElementById("infoLabel");
+    const ctx = canvas.getContext("2d");
+
+    let width = 0;
+    let height = 0;
+    let horizonY = 0;
+    let roadBottomWidth = 0;
+    let roadTopWidth = 0;
+    let dashOffset = 0;
+    let roadPhase = 0;
+    let curveAnchorA = Math.random() * Math.PI * 2;
+    let curveAnchorB = Math.random() * Math.PI * 2;
+    let curveDriftA = (Math.random() * 2 - 1) * 0.18;
+    let curveDriftB = (Math.random() * 2 - 1) * 0.12;
+    let prevDashOffset = null;
+    let lampModuloOffset = 0;
+
+    const stars = [];
+    const cityLights = [];
+    const STAR_COUNT = 140;
+    const CITY_BANDS = 12;
+    const CITY_BELT_TOP = 0;
+    const CITY_BELT_HEIGHT = 81;
+    const ROAD_SEGMENTS = 80;
+    const ROAD_HEIGHT_SCALE = 0.8;
+    const SCENE_CYCLE_SEC = 1800;
+    const INFO_VISIBLE_SEC = 60;
+    const GRADIENT_PHASE_BUCKETS = 2400;
+    let skyGradient = null;
+    let skyGlowGradient = null;
+    let sideDarkGradient = null;
+    let horizonGlowGradient = null;
+    let cityLightColor = "#ffd080";
+    let cityLightAlphaScale = 0.72;
+    let lastGradientPhaseBucket = -1;
+    let highlightedStarIndex = -1;
+    let highlightedStarStartSec = 0;
+    let highlightedStarDurationSec = 0;
+    let nextStarHighlightSec = 0;
+    const roadSamples = Array.from({ length: ROAD_SEGMENTS + 1 }, () => ({
+      y: 0,
+      left: 0,
+      right: 0,
+      centerX: 0,
+      roadWidth: 0,
+    }));
+    const SCENE_PALETTES = [
+      {
+        skyStops: [
+          [0, [0, 1, 2]],
+          [0.55, [1, 2, 8]],
+          [0.68, [1, 3, 8]],
+          [0.74, [2, 4, 10]],
+          [0.76, [0, 0, 0]],
+          [1, [0, 0, 0]],
+        ],
+        glowStops: [
+          [0, [0, 0, 0, 0]],
+          [0.54, [0, 0, 0, 0]],
+          [0.64, [255, 255, 255, 0.004]],
+          [0.71, [255, 255, 255, 0.028]],
+          [0.755, [255, 255, 255, 0.05]],
+          [0.84, [255, 255, 255, 0.012]],
+          [1, [0, 0, 0, 0]],
+        ],
+        sideStops: [
+          [0, [0, 0, 0, 0.45]],
+          [0.18, [0, 0, 0, 0.2]],
+          [0.5, [0, 0, 0, 0]],
+          [0.82, [0, 0, 0, 0.2]],
+          [1, [0, 0, 0, 0.45]],
+        ],
+        cityLight: [255, 208, 128],
+        cityAlphaScale: 0.72,
+      },
+      {
+        skyStops: [
+          [0, [1, 2, 4]],
+          [0.55, [2, 4, 8]],
+          [0.68, [2, 5, 11]],
+          [0.74, [3, 7, 13]],
+          [0.76, [2, 3, 6]],
+          [1, [0, 0, 1]],
+        ],
+        glowStops: [
+          [0, [0, 0, 0, 0]],
+          [0.54, [0, 0, 0, 0]],
+          [0.64, [2, 5, 11, 0.002]],
+          [0.71, [11, 22, 36, 0.006]],
+          [0.755, [24, 36, 51, 0.012]],
+          [0.84, [18, 28, 42, 0.004]],
+          [1, [0, 0, 0, 0]],
+        ],
+        sideStops: [
+          [0, [0, 0, 2, 0.42]],
+          [0.18, [0, 1, 4, 0.18]],
+          [0.5, [0, 0, 0, 0]],
+          [0.82, [0, 1, 4, 0.18]],
+          [1, [0, 0, 2, 0.42]],
+        ],
+        cityLight: [237, 246, 255],
+        cityAlphaScale: 0.62,
+      },
+      {
+        skyStops: [
+          [0, [2, 0, 1]],
+          [0.55, [5, 1, 2]],
+          [0.68, [7, 2, 2]],
+          [0.74, [10, 3, 2]],
+          [0.76, [5, 1, 1]],
+          [1, [1, 0, 0]],
+        ],
+        glowStops: [
+          [0, [0, 0, 0, 0]],
+          [0.54, [0, 0, 0, 0]],
+          [0.64, [10, 2, 2, 0.002]],
+          [0.71, [36, 14, 8, 0.006]],
+          [0.755, [51, 28, 18, 0.012]],
+          [0.84, [44, 19, 11, 0.004]],
+          [1, [0, 0, 0, 0]],
+        ],
+        sideStops: [
+          [0, [2, 0, 0, 0.42]],
+          [0.18, [4, 1, 0, 0.18]],
+          [0.5, [0, 0, 0, 0]],
+          [0.82, [4, 1, 0, 0.18]],
+          [1, [2, 0, 0, 0.42]],
+        ],
+        cityLight: [255, 222, 210],
+        cityAlphaScale: 0.66,
+      },
+    ];
+
+    function lerp(a, b, t) {
+      return a + (b - a) * t;
+    }
+
+    function clamp(v, lo, hi) {
+      return Math.max(lo, Math.min(hi, v));
+    }
+
+    function lerpArray(a, b, t) {
+      return a.map((v, i) => lerp(v, b[i], t));
+    }
+
+    function rgbToCss(rgb) {
+      return `rgb(${rgb.map(v => Math.round(v)).join(",")})`;
+    }
+
+    function rgbaToCss(rgba) {
+      return `rgba(${Math.round(rgba[0])},${Math.round(rgba[1])},${Math.round(rgba[2])},${rgba[3]})`;
+    }
+
+    function blendStops(stopsA, stopsB, t) {
+      return stopsA.map((stopA, i) => [stopA[0], lerpArray(stopA[1], stopsB[i][1], t)]);
+    }
+
+    function roadTopY() {
+      return height - (height - (horizonY + 24)) * 0.7 * ROAD_HEIGHT_SCALE;
+    }
+
+    function horizonGlowCenterY() {
+      return horizonY + CITY_BELT_TOP + CITY_BELT_HEIGHT * 0.42;
+    }
+
+    function updateRoadGeometry(timeSec) {
+      const pitch = Math.sin(timeSec * 0.24) * 8 + Math.sin(timeSec * 0.074) * 4;
+      const travelSec = timeSec * 1.5;
+      const roadTop = roadTopY();
+      const sway1 = Math.sin(travelSec * 0.0275 + curveAnchorA + travelSec * curveDriftA * 0.25) * 0.09;
+      const sway2 = Math.sin(travelSec * 0.0175 + curveAnchorB + travelSec * curveDriftB * 0.25) * 0.05;
+      const sway3 = Math.sin(travelSec * 0.01075 + roadPhase) * 0.035;
+      const swaySum = width * (sway1 + sway2 + sway3);
+
+      for (let i = 0; i <= ROAD_SEGMENTS; i++) {
+        const t = i / ROAD_SEGMENTS;
+        const depthGain = Math.pow(t, 1.9);
+        const y = lerp(height, roadTop, t) + pitch * (1 - t);
+        const roadWidth = lerp(roadBottomWidth, roadTopWidth, t);
+        const centerX = width * 0.5 + swaySum * depthGain;
+        const sample = roadSamples[i];
+        sample.y = y;
+        sample.left = centerX - roadWidth * 0.5;
+        sample.right = centerX + roadWidth * 0.5;
+        sample.centerX = centerX;
+        sample.roadWidth = roadWidth;
+      }
+    }
+
+    function sampleRoadGeometry(t) {
+      const clampedT = clamp(t, 0, 1);
+      const scaled = clampedT * ROAD_SEGMENTS;
+      const i0 = Math.floor(scaled);
+      const i1 = Math.min(ROAD_SEGMENTS, i0 + 1);
+      const mix = scaled - i0;
+      const a = roadSamples[i0];
+      const b = roadSamples[i1];
+      return {
+        y: lerp(a.y, b.y, mix),
+        left: lerp(a.left, b.left, mix),
+        right: lerp(a.right, b.right, mix),
+        centerX: lerp(a.centerX, b.centerX, mix),
+        roadWidth: lerp(a.roadWidth, b.roadWidth, mix),
+      };
+    }
+
+    function resize() {
+      const dpr = Math.max(1, window.devicePixelRatio || 1);
+      width = Math.floor(window.innerWidth);
+      height = Math.floor(window.innerHeight);
+      canvas.width = Math.floor(width * dpr);
+      canvas.height = Math.floor(height * dpr);
+      canvas.style.width = width + "px";
+      canvas.style.height = height + "px";
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      horizonY = height * 0.76;
+      roadBottomWidth = width * 0.6888;
+      roadTopWidth = width * 0.0672;
+      updateSceneGradients(0);
+
+      buildStars();
+      buildCityLights();
+      runSanityChecks();
+    }
+
+    function updateSceneGradients(timeSec) {
+      const cyclePos = (timeSec % SCENE_CYCLE_SEC) / SCENE_CYCLE_SEC;
+      const phaseBucket = Math.floor(cyclePos * GRADIENT_PHASE_BUCKETS);
+      if (phaseBucket === lastGradientPhaseBucket) return;
+      lastGradientPhaseBucket = phaseBucket;
+
+      const scaled = cyclePos * SCENE_PALETTES.length;
+      const fromIndex = Math.floor(scaled) % SCENE_PALETTES.length;
+      const toIndex = (fromIndex + 1) % SCENE_PALETTES.length;
+      const mix = scaled - Math.floor(scaled);
+      const from = SCENE_PALETTES[fromIndex];
+      const to = SCENE_PALETTES[toIndex];
+      const skyStops = blendStops(from.skyStops, to.skyStops, mix);
+      const glowStops = blendStops(from.glowStops, to.glowStops, mix);
+      const sideStops = blendStops(from.sideStops, to.sideStops, mix);
+      const glowColor = lerpArray(glowStops[3][1], glowStops[4][1], 0.35);
+
+      skyGradient = ctx.createLinearGradient(0, 0, 0, height);
+      for (const [offset, color] of skyStops) {
+        skyGradient.addColorStop(offset, rgbToCss(color));
+      }
+
+      skyGlowGradient = ctx.createLinearGradient(0, 0, 0, height);
+      for (const [offset, color] of glowStops) {
+        skyGlowGradient.addColorStop(offset, rgbaToCss(color));
+      }
+
+      sideDarkGradient = ctx.createLinearGradient(0, 0, width, 0);
+      for (const [offset, color] of sideStops) {
+        sideDarkGradient.addColorStop(offset, rgbaToCss(color));
+      }
+
+      const glowCenterY = horizonGlowCenterY();
+      const glowRadius = Math.max(width * 0.38, height * 0.24);
+      const glowAlpha = glowColor[3] * 0.85;
+      horizonGlowGradient = ctx.createRadialGradient(
+        width * 0.5,
+        glowCenterY,
+        0,
+        width * 0.5,
+        glowCenterY,
+        glowRadius
+      );
+      horizonGlowGradient.addColorStop(0, rgbaToCss([glowColor[0], glowColor[1], glowColor[2], glowAlpha]));
+      horizonGlowGradient.addColorStop(0.38, rgbaToCss([glowColor[0], glowColor[1], glowColor[2], glowAlpha * 0.45]));
+      horizonGlowGradient.addColorStop(0.72, rgbaToCss([glowColor[0], glowColor[1], glowColor[2], glowAlpha * 0.12]));
+      horizonGlowGradient.addColorStop(1, "rgba(0,0,0,0)");
+
+      cityLightColor = rgbToCss(lerpArray(from.cityLight, to.cityLight, mix));
+      cityLightAlphaScale = lerp(from.cityAlphaScale, to.cityAlphaScale, mix);
+    }
+
+    function buildStars() {
+      stars.length = 0;
+      for (let i = 0; i < STAR_COUNT; i++) {
+        stars.push({
+          x: Math.random() * width,
+          y: Math.random() * Math.max(10, horizonY - 10),
+          r: Math.random() < 0.85 ? 1 : 1.8,
+          a: 0.35 + Math.random() * 0.65,
+          tw: Math.random() * Math.PI * 2,
+          speed: 0.3 + Math.random() * 1.0,
+        });
+      }
+      highlightedStarIndex = -1;
+      highlightedStarStartSec = 0;
+      highlightedStarDurationSec = 0;
+      nextStarHighlightSec = 1.5 + Math.random() * 6.0;
+    }
+
+    function updateStarHighlight(timeSec) {
+      if (highlightedStarIndex >= 0) {
+        const elapsed = timeSec - highlightedStarStartSec;
+        if (elapsed >= highlightedStarDurationSec) {
+          highlightedStarIndex = -1;
+          nextStarHighlightSec = timeSec + 2.0 + Math.random() * 7.0;
+        }
+        return;
+      }
+
+      if (timeSec < nextStarHighlightSec || stars.length === 0) return;
+
+      highlightedStarIndex = Math.floor(Math.random() * stars.length);
+      highlightedStarStartSec = timeSec;
+      highlightedStarDurationSec = 0.35 + Math.random() * 0.55;
+    }
+
+    function buildCityLights() {
+      cityLights.length = 0;
+      const count = 180;
+      const effectiveBeltHeight = CITY_BELT_HEIGHT * 0.5;
+      const effectiveTop = CITY_BELT_TOP + (CITY_BELT_HEIGHT - effectiveBeltHeight) * 0.5;
+      const effectiveBottom = effectiveTop + effectiveBeltHeight;
+      for (let i = 0; i < count; i++) {
+        // Bias lights toward the far skyline so the upper bands read denser.
+        const depth = 1 - Math.pow(Math.random(), 1.8);
+        const y = lerp(effectiveBottom, effectiveTop, depth);
+        const size = lerp(4.8, 1.6, depth);
+        cityLights.push({
+          x: Math.random() * width,
+          y,
+          alpha: lerp(0.22, 0.5, depth),
+          w: size,
+          h: size,
+        });
+      }
+    }
+
+    function roadCenterOffset(yNorm, timeSec) {
+      const travelSec = timeSec * 1.5;
+      const sway1 = Math.sin(travelSec * 0.0275 + curveAnchorA + travelSec * curveDriftA * 0.25) * 0.09;
+      const sway2 = Math.sin(travelSec * 0.0175 + curveAnchorB + travelSec * curveDriftB * 0.25) * 0.05;
+      const sway3 = Math.sin(travelSec * 0.01075 + roadPhase) * 0.035;
+      const depthGain = Math.pow(yNorm, 1.9);
+      return width * (sway1 + sway2 + sway3) * depthGain;
+    }
+
+    function roadEdgesAt(yNorm, timeSec) {
+      const pitch = Math.sin(timeSec * 0.24) * 8 + Math.sin(timeSec * 0.074) * 4;
+      const y = lerp(height, roadTopY(), yNorm) + pitch * (1 - yNorm);
+      const roadWidth = lerp(roadBottomWidth, roadTopWidth, yNorm);
+      const centerX = width * 0.5 + roadCenterOffset(yNorm, timeSec);
+      return {
+        y,
+        left: centerX - roadWidth * 0.5,
+        right: centerX + roadWidth * 0.5,
+        centerX,
+        roadWidth,
+      };
+    }
+
+    function farCityBandYNorm() {
+      const bandHeight = CITY_BELT_HEIGHT / CITY_BANDS;
+      const farBandMid = CITY_BELT_TOP + bandHeight * 0.5;
+      const farBandScreenY = horizonY + farBandMid;
+      return clamp((height - farBandScreenY) / (height - roadTopY()), 0, 1);
+    }
+
+    function buildLaneDashSequence() {
+      const cycleScale = 4;
+      const gapNear = 0.18 * cycleScale;
+      const gapFar = 0.02 * cycleScale;
+      const dashRatio = 0.45;
+      let tCursor = -dashOffset * gapNear;
+      const items = [];
+
+      while (tCursor < 1) {
+        const gap = lerp(gapNear, gapFar, clamp(tCursor, 0, 1));
+        const dashLen = gap * dashRatio;
+        const dashStart = tCursor;
+        const dashEnd = dashStart + dashLen;
+        items.push({ gap, dashLen, dashStart, dashEnd });
+        tCursor += gap;
+      }
+
+      return items;
+    }
+
+    function drawSky(timeSec) {
+      updateStarHighlight(timeSec);
+      const farParallaxShift = -roadCenterOffset(farCityBandYNorm(), timeSec) * 2.7;
+      const skyGradientShift = farParallaxShift * 0.12;
+      const sideDarkShift = farParallaxShift * 0.2;
+
+      ctx.save();
+      ctx.translate(skyGradientShift, 0);
+      ctx.fillStyle = skyGradient;
+      ctx.fillRect(-Math.abs(skyGradientShift), 0, width + Math.abs(skyGradientShift) * 2, height);
+      ctx.restore();
+
+      ctx.save();
+      ctx.translate(skyGradientShift, 0);
+      ctx.fillStyle = skyGlowGradient;
+      ctx.fillRect(-Math.abs(skyGradientShift), 0, width + Math.abs(skyGradientShift) * 2, height);
+      ctx.restore();
+
+      ctx.save();
+      ctx.translate(farParallaxShift, 0);
+      ctx.beginPath();
+      ctx.rect(-Math.abs(farParallaxShift), 0, width + Math.abs(farParallaxShift) * 2, horizonY);
+      ctx.clip();
+      ctx.fillStyle = horizonGlowGradient;
+      ctx.fillRect(-Math.abs(farParallaxShift), 0, width + Math.abs(farParallaxShift) * 2, height);
+      ctx.restore();
+
+      ctx.save();
+      ctx.translate(sideDarkShift, 0);
+      ctx.fillStyle = sideDarkGradient;
+      ctx.fillRect(-Math.abs(sideDarkShift), 0, width + Math.abs(sideDarkShift) * 2, horizonY);
+      ctx.restore();
+
+      const skyPitch = (Math.sin(timeSec * 0.24) * 8 + Math.sin(timeSec * 0.074) * 4) * 0.08;
+      const starShiftX = farParallaxShift;
+
+      for (let i = 0; i < stars.length; i++) {
+        const s = stars[i];
+        const twinkle = 0.75 + 0.25 * Math.sin(timeSec * s.speed + s.tw);
+        let highlightBoost = 1;
+        let radiusBoost = 1;
+        if (i === highlightedStarIndex) {
+          const pulseT = clamp((timeSec - highlightedStarStartSec) / highlightedStarDurationSec, 0, 1);
+          const envelope = Math.sin(pulseT * Math.PI);
+          highlightBoost -= envelope * 0.98;
+          radiusBoost -= envelope * 0.7;
+        }
+        const baseX = s.x + starShiftX;
+        const y = s.y + skyPitch * 0.35;
+        ctx.globalAlpha = Math.max(0, Math.min(1, s.a * twinkle * highlightBoost));
+        ctx.fillStyle = "#ffffff";
+        const radius = Math.max(0.2, s.r * radiusBoost);
+
+        for (const x of [baseX - width, baseX, baseX + width]) {
+          ctx.beginPath();
+          ctx.arc(x, y, radius, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    function drawHorizonGlow(timeSec) {
+      const bands = CITY_BANDS;
+      const beltTop = CITY_BELT_TOP;
+      const beltHeight = CITY_BELT_HEIGHT;
+      const bandHeight = beltHeight / bands;
+
+      for (let band = 0; band < bands; band++) {
+        const bandT = band / (bands - 1);
+        const bandTop = beltTop + bandT * beltHeight;
+        const bandBottom = bandTop + bandHeight;
+        const bandMid = (bandTop + bandBottom) * 0.5;
+        const bandScreenY = horizonY + bandMid;
+        const bandYNorm = clamp((height - bandScreenY) / (height - roadTopY()), 0, 1);
+        const bandShift = -roadCenterOffset(bandYNorm, timeSec) * 2.7;
+        const widthScale = lerp(0.34, 1.0, bandT);
+        const bandCenterX = width * 0.5;
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(0, horizonY + bandTop, width, bandHeight + 1);
+        ctx.clip();
+        ctx.translate(bandShift, 0);
+        ctx.translate(bandCenterX, 0);
+        ctx.scale(widthScale, 1);
+        ctx.translate(-bandCenterX, 0);
+
+        for (const light of cityLights) {
+          if (light.y < bandTop || light.y >= bandBottom) continue;
+
+          let x = light.x;
+          if (x < -light.w / widthScale) x += width + light.w * 2 / widthScale;
+          if (x > width + light.w / widthScale) x -= width + light.w * 2 / widthScale;
+
+          const y = horizonY + light.y;
+          ctx.globalAlpha = light.alpha * cityLightAlphaScale;
+          ctx.fillStyle = cityLightColor;
+          ctx.fillRect(x, y, light.w, light.h);
+        }
+        ctx.restore();
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    function drawRoad(timeSec, laneDashSeq) {
+      const segments = ROAD_SEGMENTS;
+      const edgeLineColor = "#f4f4f4";
+      const centerLineColor = "#ffffff";
+
+      ctx.beginPath();
+      for (let i = 0; i <= segments; i++) {
+        const p = roadSamples[i];
+        if (i === 0) ctx.moveTo(p.left, p.y);
+        else ctx.lineTo(p.left, p.y);
+      }
+      for (let i = segments; i >= 0; i--) {
+        const p = roadSamples[i];
+        ctx.lineTo(p.right, p.y);
+      }
+      ctx.closePath();
+
+      ctx.fillStyle = "#050505";
+      ctx.fill();
+
+      function lineHazeAt(t, phaseShift, strength) {
+        const fade = clamp((t - 0.55) / 0.45, 0, 1);
+        const scratch = 0.55 + 0.45 * Math.sin(t * 58 + phaseShift);
+        return lerp(1, Math.pow(clamp(scratch, 0, 1), strength), fade);
+      }
+
+      function drawStrip(t0, t1, x0Getter, x1Getter, alpha, color) {
+        const p0 = roadSamples[Math.round(t0 * segments)];
+        const p1 = roadSamples[Math.round(t1 * segments)];
+        if (alpha <= 0.01) return;
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.moveTo(x0Getter(p0, t0), p0.y);
+        ctx.lineTo(x0Getter(p1, t1), p1.y);
+        ctx.lineTo(x1Getter(p1, t1), p1.y);
+        ctx.lineTo(x1Getter(p0, t0), p0.y);
+        ctx.closePath();
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+
+      function drawCenterDashTrapezoids(t0, t1, sideSign, alpha) {
+        const subdivisionCount = Math.max(2, Math.ceil((t1 - t0) * segments * 3));
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = centerLineColor;
+
+        for (let step = 0; step < subdivisionCount; step++) {
+          const segT0 = lerp(t0, t1, step / subdivisionCount);
+          const segT1 = lerp(t0, t1, (step + 1) / subdivisionCount);
+          const p0 = sampleRoadGeometry(segT0);
+          const p1 = sampleRoadGeometry(segT1);
+          const cw0 = lerp(centerWidthBottom, centerWidthTop, segT0);
+          const cw1 = lerp(centerWidthBottom, centerWidthTop, segT1);
+          const offset0 = p0.roadWidth * laneOffsetFactor * sideSign;
+          const offset1 = p1.roadWidth * laneOffsetFactor * sideSign;
+
+          ctx.beginPath();
+          ctx.moveTo(p0.centerX + offset0 - cw0 * 0.5, p0.y);
+          ctx.lineTo(p1.centerX + offset1 - cw1 * 0.5, p1.y);
+          ctx.lineTo(p1.centerX + offset1 + cw1 * 0.5, p1.y);
+          ctx.lineTo(p0.centerX + offset0 + cw0 * 0.5, p0.y);
+          ctx.closePath();
+          ctx.fill();
+        }
+
+        ctx.globalAlpha = 1;
+      }
+
+      const edgeWidthBottom = 18;
+      const edgeWidthTop = 6;
+      const centerWidthBottom = 24;
+      const centerWidthTop = 4;
+      const laneOffsetFactor = 0.18;
+
+      function edgeAlphaAt(t) {
+        const baseAlpha = lerp(0.35, 0.05, t);
+        const hazeFade = lerp(1, 0.18, Math.pow(clamp((t - 0.62) / 0.38, 0, 1), 1.2));
+        const hazeBreakup = lineHazeAt(t, roadPhase * 1.9 + 0.35, 1.6);
+        return baseAlpha * hazeFade * hazeBreakup;
+      }
+
+      function centerAlphaAt(t) {
+        const baseAlpha = lerp(1.0, 0.05, Math.pow(t, 1.8)) * 0.8;
+        const hazeFade = lerp(1, 0.08, Math.pow(clamp((t - 0.58) / 0.42, 0, 1), 1.35));
+        const hazeBreakup = lineHazeAt(t, curveAnchorA * 1.3 + 0.9, 2.2);
+        return baseAlpha * hazeFade * hazeBreakup;
+      }
+
+      for (let i = 0; i < segments; i++) {
+        const t0 = i / segments;
+        const t1 = (i + 1) / segments;
+
+        drawStrip(
+          t0,
+          t1,
+          (p, t) => p.left - lerp(edgeWidthBottom, edgeWidthTop, t) * 0.5,
+          (p, t) => p.left + lerp(edgeWidthBottom, edgeWidthTop, t) * 0.5,
+          edgeAlphaAt((t0 + t1) * 0.5),
+          edgeLineColor
+        );
+        drawStrip(
+          t0,
+          t1,
+          (p, t) => p.right - lerp(edgeWidthBottom, edgeWidthTop, t) * 0.5,
+          (p, t) => p.right + lerp(edgeWidthBottom, edgeWidthTop, t) * 0.5,
+          edgeAlphaAt((t0 + t1) * 0.5),
+          edgeLineColor
+        );
+      }
+
+      for (const item of laneDashSeq) {
+        const t0 = Math.max(0, item.dashStart);
+        const t1 = Math.min(1, item.dashEnd);
+        if (t1 <= t0) continue;
+
+        const centerAlpha = centerAlphaAt((t0 + t1) * 0.5);
+        if (centerAlpha <= 0.01) continue;
+
+        drawCenterDashTrapezoids(t0, t1, -1, centerAlpha);
+        drawCenterDashTrapezoids(t0, t1, 1, centerAlpha);
+      }
+    }
+
+    function drawRoadsideLines(timeSec, laneDashSeq) {
+      const lampStep = 3;
+      const edgeMargin = 80;
+      const bottomSample = roadSamples[ROAD_SEGMENTS];
+
+      function sampleRoadsideAnchor(t) {
+        const clampedT = clamp(t, 0, 1);
+        const p = sampleRoadGeometry(clampedT);
+        const prevT = Math.max(0, clampedT - 0.025);
+        const prevP = sampleRoadGeometry(prevT);
+        const dx = p.centerX - prevP.centerX;
+        const dy = p.y - prevP.y;
+        const len = Math.max(1e-6, Math.hypot(dx, dy));
+        return {
+          p,
+          nx: -dy / len,
+          ny: dx / len,
+        };
+      }
+
+      function getLampPairGeometry(t) {
+        const anchor = sampleRoadsideAnchor(t);
+        const { p, nx, ny } = anchor;
+        const visualT = clamp(t, 0, 1);
+        const overshoot = Math.max(0, -t);
+
+        const baseOffset = lerp(30, 10, visualT);
+        const lampHeight = lerp(810, 48, visualT) * 0.75;
+        const glowSize = lerp(20, 5.0, visualT);
+        const coreSize = lerp(7.2, 2.2, visualT);
+        const alpha = lerp(0.21, 0.05, visualT) * 1.44;
+        const lampLateralDistance = p.roadWidth * 0.6;
+
+        let leftBaseX = p.centerX - lampLateralDistance + nx * (-baseOffset);
+        let leftBaseY = p.y + ny * (-baseOffset);
+        let rightBaseX = p.centerX + lampLateralDistance + nx * baseOffset;
+        let rightBaseY = p.y + ny * baseOffset;
+
+        if (overshoot > 0) {
+          const outward = overshoot * width * 0.6;
+          const settleY = bottomSample.y + overshoot * height * 0.03;
+          leftBaseX = bottomSample.centerX - bottomSample.roadWidth - baseOffset - outward;
+          rightBaseX = bottomSample.centerX + bottomSample.roadWidth + baseOffset + outward;
+          leftBaseY = settleY;
+          rightBaseY = settleY;
+        }
+
+        return {
+          glowSize,
+          coreSize,
+          alpha,
+          coreAlpha: lerp(0.7, 0.14, visualT) * 1.44,
+          lampHeight,
+          left: { bx: leftBaseX, by: leftBaseY },
+          right: { bx: rightBaseX, by: rightBaseY },
+        };
+      }
+
+      function drawLamp(lamp, lampHeight, glowSize, coreSize, alpha, coreAlpha) {
+        const lightX = lamp.bx;
+        const lightY = lamp.by - lampHeight;
+        const visible =
+          lightX >= -edgeMargin && lightX <= width + edgeMargin &&
+          lightY >= -edgeMargin && lightY <= height + edgeMargin;
+
+        const g = ctx.createRadialGradient(lightX, lightY, 0, lightX, lightY, glowSize);
+        g.addColorStop(0, `rgba(255, 220, 160, ${alpha})`);
+        g.addColorStop(0.45, `rgba(255, 200, 120, ${alpha * 0.45})`);
+        g.addColorStop(1, "rgba(255, 180, 80, 0)");
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(lightX, lightY, glowSize, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.globalAlpha = coreAlpha;
+        ctx.fillStyle = "#ffd8a0";
+        ctx.beginPath();
+        ctx.arc(lightX, lightY, coreSize, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        return visible;
+      }
+
+      function drawLampPair(pair) {
+        let anyVisible = false;
+        anyVisible = drawLamp(pair.left, pair.lampHeight, pair.glowSize, pair.coreSize, pair.alpha, pair.coreAlpha) || anyVisible;
+        anyVisible = drawLamp(pair.right, pair.lampHeight, pair.glowSize, pair.coreSize, pair.alpha, pair.coreAlpha) || anyVisible;
+        return anyVisible;
+      }
+
+      function drawLampPairAt(t) {
+        if (t <= 0) return true;
+        return drawLampPair(getLampPairGeometry(t));
+      }
+
+      // Detect wrap (dashOffset jumps from near 1 -> 0)
+      if (prevDashOffset !== null && dashOffset < prevDashOffset) {
+        lampModuloOffset = (lampModuloOffset + 1) % lampStep;
+      }
+      prevDashOffset = dashOffset;
+
+      const selectedTs = [];
+      for (let i = 0; i < laneDashSeq.length; i++) {
+        const sel = (i + lampModuloOffset) % lampStep;
+        if (sel !== 0) continue;
+
+        const t = laneDashSeq[i].dashStart;
+        const visible = drawLampPairAt(t);
+        selectedTs.push(t);
+        if (!visible && t < -0.12) break;
+      }
+    }
+
+    function runSanityChecks() {
+      const p = roadEdgesAt(0.5, 0);
+      console.assert(Number.isFinite(p.left) && Number.isFinite(p.right) && Number.isFinite(p.y), "roadEdgesAt should return finite coordinates");
+      console.assert(p.left < p.right, "roadEdgesAt should produce a positive road width");
+      console.assert(cityLights.length > 0 && stars.length > 0, "scene assets should be generated after resize()");
+
+      const laneDashSeq = buildLaneDashSequence();
+      console.assert(Array.isArray(laneDashSeq) && laneDashSeq.length > 0, "buildLaneDashSequence should return a non-empty array");
+      console.assert(laneDashSeq.every(item => Number.isFinite(item.dashStart) && Number.isFinite(item.dashEnd)), "lane dash items should contain finite dash bounds");
+      const lampStep = 3;
+      const lampCandidates = laneDashSeq.filter((_, i) => i % lampStep === 0);
+      console.assert(lampCandidates.length > 0, "streetlight selection should produce at least one visible lamp candidate");
+    }
+
+    function animate(ts) {
+      const timeSec = ts * 0.001;
+      const cycleElapsedSec = timeSec % SCENE_CYCLE_SEC;
+      dashOffset = (timeSec * 0.68 * 2.25) % 1;
+      updateSceneGradients(timeSec);
+      updateRoadGeometry(timeSec);
+      const laneDashSeq = buildLaneDashSequence();
+      infoLabel.style.opacity = cycleElapsedSec < INFO_VISIBLE_SEC ? "1" : "0";
+
+      drawSky(timeSec);
+      drawHorizonGlow(timeSec);
+      drawRoad(timeSec, laneDashSeq);
+      drawRoadsideLines(timeSec, laneDashSeq);
+
+      requestAnimationFrame(animate);
+    }
+
+    window.addEventListener("resize", resize);
+
+    resize();
+
+    const fsBtn = document.getElementById("fsBtn");
+    fsBtn.addEventListener("click", async () => {
+      try {
+        if (!document.fullscreenElement) {
+          await document.documentElement.requestFullscreen();
+        } else {
+          await document.exitFullscreen();
+        }
+      } catch (err) {
+        console.error("Fullscreen toggle failed:", err);
+      }
+    });
+
+    requestAnimationFrame(animate);
+  </script>
+</body>
+</html>
