@@ -73,6 +73,8 @@
     let curveDriftB = (Math.random() * 2 - 1) * 0.12;
     let prevDashOffset = null;
     let lampModuloOffset = 0;
+    let currentBackgroundPanX = 0;
+    let currentBackgroundPanVelocityX = 0;
 
     const stars = [];
     const cityLights = [];
@@ -222,21 +224,40 @@
       return horizonY + CITY_BELT_TOP + CITY_BELT_HEIGHT * 0.42;
     }
 
+    function backgroundPanStateAt(timeSec) {
+      const travelSec = timeSec * 1.5;
+      const freq1 = 0.0275 + curveDriftA * 0.25;
+      const freq2 = 0.0175 + curveDriftB * 0.25;
+      const freq3 = 0.01075;
+      const phase1 = travelSec * freq1 + curveAnchorA;
+      const phase2 = travelSec * freq2 + curveAnchorB;
+      const phase3 = travelSec * freq3 + roadPhase;
+      const posNorm =
+        Math.sin(phase1) * 0.09 +
+        Math.sin(phase2) * 0.05 +
+        Math.sin(phase3) * 0.035;
+      const velNorm =
+        Math.cos(phase1) * 0.09 * freq1 * 1.5 +
+        Math.cos(phase2) * 0.05 * freq2 * 1.5 +
+        Math.cos(phase3) * 0.035 * freq3 * 1.5;
+      return {
+        x: width * posNorm * 2.7,
+        velocityX: width * velNorm * 2.7,
+      };
+    }
+
     function updateRoadGeometry(timeSec) {
       const pitch = Math.sin(timeSec * 0.24) * 8 + Math.sin(timeSec * 0.074) * 4;
-      const travelSec = timeSec * 1.5;
       const roadTop = roadTopY();
-      const sway1 = Math.sin(travelSec * 0.0275 + curveAnchorA + travelSec * curveDriftA * 0.25) * 0.09;
-      const sway2 = Math.sin(travelSec * 0.0175 + curveAnchorB + travelSec * curveDriftB * 0.25) * 0.05;
-      const sway3 = Math.sin(travelSec * 0.01075 + roadPhase) * 0.035;
-      const swaySum = width * (sway1 + sway2 + sway3);
+      const horizonLead = -currentBackgroundPanX * 0.06;
+      const curveLead = -currentBackgroundPanVelocityX * 11;
 
       for (let i = 0; i <= ROAD_SEGMENTS; i++) {
         const t = i / ROAD_SEGMENTS;
         const depthGain = Math.pow(t, 1.9);
         const y = lerp(height, roadTop, t) + pitch * (1 - t);
         const roadWidth = lerp(roadBottomWidth, roadTopWidth, t);
-        const centerX = width * 0.5 + swaySum * depthGain;
+        const centerX = width * 0.5 + (horizonLead + curveLead) * depthGain;
         const sample = roadSamples[i];
         sample.y = y;
         sample.left = centerX - roadWidth * 0.5;
@@ -392,12 +413,8 @@
     }
 
     function roadCenterOffset(yNorm, timeSec) {
-      const travelSec = timeSec * 1.5;
-      const sway1 = Math.sin(travelSec * 0.0275 + curveAnchorA + travelSec * curveDriftA * 0.25) * 0.09;
-      const sway2 = Math.sin(travelSec * 0.0175 + curveAnchorB + travelSec * curveDriftB * 0.25) * 0.05;
-      const sway3 = Math.sin(travelSec * 0.01075 + roadPhase) * 0.035;
       const depthGain = Math.pow(yNorm, 1.9);
-      return width * (sway1 + sway2 + sway3) * depthGain;
+      return (-currentBackgroundPanX * 0.06 - currentBackgroundPanVelocityX * 11) * depthGain;
     }
 
     function roadEdgesAt(yNorm, timeSec) {
@@ -443,7 +460,7 @@
 
     function drawSky(timeSec) {
       updateStarHighlight(timeSec);
-      const farParallaxShift = -roadCenterOffset(farCityBandYNorm(), timeSec) * 2.7;
+      const farParallaxShift = currentBackgroundPanX;
       const skyGradientShift = farParallaxShift * 0.12;
       const sideDarkShift = farParallaxShift * 0.2;
 
@@ -516,7 +533,7 @@
         const bandMid = (bandTop + bandBottom) * 0.5;
         const bandScreenY = horizonY + bandMid;
         const bandYNorm = clamp((height - bandScreenY) / (height - roadTopY()), 0, 1);
-        const bandShift = -roadCenterOffset(bandYNorm, timeSec) * 2.7;
+        const bandShift = currentBackgroundPanX * lerp(0.7, 1.0, bandT);
         const widthScale = lerp(0.34, 1.0, bandT);
         const bandCenterX = width * 0.5;
 
@@ -802,6 +819,9 @@
       const timeSec = ts * 0.001;
       const cycleElapsedSec = timeSec % SCENE_CYCLE_SEC;
       dashOffset = (timeSec * 0.68 * 2.25) % 1;
+      const backgroundPanState = backgroundPanStateAt(timeSec);
+      currentBackgroundPanX = backgroundPanState.x;
+      currentBackgroundPanVelocityX = backgroundPanState.velocityX;
       updateSceneGradients(timeSec);
       updateRoadGeometry(timeSec);
       const laneDashSeq = buildLaneDashSequence();
